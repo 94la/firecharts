@@ -44,9 +44,9 @@
 
       <aside class="sidebar">
         <section class="settings-card glass"><div class="settings-heading"><h2>Фильтр объёма</h2><span class="settings-icon">☷</span></div><p class="helper">Выделяй крупную ликвидность,<br>убирая фон со всей карты.</p>
-          <div class="segmented full" role="group" aria-label="Тип фильтра"><button data-filter="usdt" class="active" aria-pressed="true">USDT</button><button data-filter="percentile" aria-pressed="false">Перцентиль</button></div>
+          <div class="segmented full" role="group" aria-label="Тип фильтра"><button data-filter="usdt" class="active" aria-pressed="true">USDT</button><button data-filter="manual" aria-pressed="false">Вручную</button></div>
           <div id="usdt-controls"><label class="control-label" for="volume-input">Минимальный объём <span>млн USDT</span></label><div class="number-field"><input id="volume-input" type="number" value="5" min="0" max="100" step="0.5" inputmode="decimal" aria-label="Минимальный объём в миллионах USDT"><span>M</span></div><input id="volume-slider" type="range" min="0" max="30" step="0.5" value="5" aria-label="Порог объёма"><div class="range-labels"><span>0M</span><span>30M</span></div></div>
-          <div id="percentile-controls" hidden><label class="control-label" for="percentile-low">Нижний перцентиль <output id="percentile-low-value">67%</output></label><input id="percentile-low" type="range" min="0" max="98" value="67"><label class="control-label" for="percentile-high">Верхний перцентиль <output id="percentile-high-value">99%</output></label><input id="percentile-high" type="range" min="1" max="100" value="99"><p class="helper small-text">По положительным объёмам ячеек текущей карты, после объединения уровней.</p></div>
+          <div id="manual-controls" hidden><label class="control-label" for="manual-high">Верхняя граница <span>млн USDT</span></label><div class="number-field"><input id="manual-high" type="number" min="0" step="any" value="25" inputmode="decimal" placeholder="Например, 25"><span>M</span></div><label class="control-label" for="manual-low">Нижняя граница <span>млн USDT</span></label><div class="number-field"><input id="manual-low" type="number" min="0" step="any" value="5" inputmode="decimal" placeholder="Например, 5"><span>M</span></div><p id="manual-error" class="error" role="alert" hidden>Введите две границы: нижняя не меньше нуля, верхняя больше нижней.</p><p class="helper small-text">Объёмы ниже нижней границы скрыты. Верхняя граница задаёт самый светлый цвет.</p></div>
           <div class="scale-section"><div class="control-label">Шкала ликвидности <span>USDT</span></div><div class="color-scale"></div><div class="scale-labels"><strong id="scale-low">5M</strong><strong id="scale-high">—</strong></div><p id="filter-caption" class="helper small-text">Меньшие объёмы скрыты. Светло-серебряный — верх шкалы и выше.</p></div>
           <div class="price-setting">
             <div class="setting-row"><label for="price-step">Ценовой шаг · USDT</label><input id="price-step" type="number" min="25" max="2000" step="25" value="200" placeholder="25–2000" title="От 25 до 2000 USDT, кратно 25" inputmode="numeric"></div>
@@ -89,11 +89,7 @@
           </ul>
           <p class="helper">Шаг: 25–2000 USDT, кратно 25. Диапазон: ±0.5–20%. Введи значения и нажми «Применить». Чтобы расширить карту за пределы загруженной области, увеличь настройку диапазона.</p>
         </details>
-        <details id="server-load" class="info-card glass" hidden><summary>Нагрузка сайта <span>+</span></summary><div class="load-stats">
-          <span>Посетители за 5 мин<strong id="load-visitors">—</strong></span><span>Запросы за 5 мин<strong id="load-requests">—</strong></span>
-          <span>Ответ p95, худшая минута<strong id="load-latency">—</strong></span><span>CPU веб-процесса<strong id="load-cpu">—</strong></span>
-          <span>Ошибки / отказы за 5 мин<strong id="load-errors">—</strong></span><span>Нагрузка VPS / ядра<strong id="load-system">—</strong></span><span>Пик запросов/мин за сутки<strong id="load-peak">—</strong></span><span>Свободная RAM VPS<strong id="load-memory">—</strong></span>
-        </div><p class="helper small-text">Только для владельца. Посетители — приблизительно активные вкладки. Статистика обновляется каждые 30 секунд.</p></details></div>
+        </div>
       </aside>
     </section>
   </main>

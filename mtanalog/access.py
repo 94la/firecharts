@@ -37,6 +37,9 @@ def permission(config, token, now=None):
         return True, None
     guest = registry.get('guest_hash', '')
     expires = registry.get('guest_expires', 0)
+    if (registry.get('guest_permanent') is True and isinstance(guest, str)
+            and secrets.compare_digest(guest, hashed)):
+        return True, None
     if (isinstance(guest, str) and isinstance(expires, (float, int))
             and expires > now and secrets.compare_digest(guest, hashed)):
         return True, expires
@@ -62,7 +65,7 @@ def invite(config, base_url, output, owner_output=None, hours=12, now=None):
     if (parsed.scheme != 'https' or not parsed.netloc or parsed.username or parsed.password
             or parsed.path not in ('', '/') or parsed.query or parsed.fragment):
         raise ValueError('Use an HTTPS origin, without path, query, or fragment')
-    if not 0 < hours <= 24*30:
+    if hours is not None and not 0 < hours <= 24*30:
         raise ValueError('Hours must be between 0 and 720')
     now = time.time() if now is None else now
     root = Path(config['data_dir'])
@@ -77,8 +80,8 @@ def invite(config, base_url, output, owner_output=None, hours=12, now=None):
             private_write(owner_output, base_url.rstrip('/')+'/enter#access='+owner+'\n')
             registry['owner_hash'] = digest(owner)
         guest = secrets.token_urlsafe(32)
-        expires = now+hours*3600
-        registry.update(guest_hash=digest(guest), guest_expires=expires)
+        expires = None if hours is None else now+hours*3600
+        registry.update(guest_hash=digest(guest), guest_expires=expires, guest_permanent=hours is None)
         private_write(output, base_url.rstrip('/')+'/enter#access='+guest+'\n')
         private_write(root/'web-access.json', json.dumps(registry)+'\n')
         return expires

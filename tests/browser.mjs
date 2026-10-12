@@ -1,18 +1,7 @@
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
 const {chromium}=await import(process.env.PLAYWRIGHT_MODULE||'playwright');
 const fixture={base:process.env.MTANALOG_BROWSER_URL||'http://127.0.0.1:8790'};
 const browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_EXECUTABLE,args:['--no-sandbox']});
-if(process.env.MTANALOG_BROWSER_LINK_FILE){
-  const link=new URL(readFileSync(process.env.MTANALOG_BROWSER_LINK_FILE,'utf8').trim());
-  const token=new URLSearchParams(link.hash.slice(1)).get('access');
-  const create=browser.newContext.bind(browser);
-  browser.newContext=async options=>{
-    const context=await create(options);
-    await context.addCookies([{name:'__Host-mianalog-access',value:token,url:fixture.base,secure:true,httpOnly:true,sameSite:'Lax'}]);
-    return context;
-  };
-}
 const errors=[];
 try{
   const context=await browser.newContext({viewport:{width:1440,height:1150},deviceScaleFactor:1});
@@ -80,11 +69,16 @@ try{
   await page.locator('[data-period="1w"]').click();
   await page.waitForFunction(()=>document.querySelector('#price-range').textContent==='±10%');
   assert.equal(await page.locator('[data-period="1w"]').getAttribute('aria-pressed'),'true');
-  await page.locator('[data-filter="percentile"]').click();
-  await page.locator('#percentile-controls').waitFor({state:'visible'});
-  await page.locator('#percentile-low').fill('85');
-  await page.locator('#percentile-low').dispatchEvent('input');
-  assert.equal(await page.locator('#percentile-low-value').innerText(),'85%');
+  await page.locator('[data-filter="manual"]').click();
+  await page.locator('#manual-controls').waitFor({state:'visible'});
+  assert.equal(await page.locator('.settings-card input[type="range"]:visible').count(),0);
+  await page.locator('#manual-low').fill('3');await page.locator('#manual-high').fill('30');
+  await page.waitForFunction(()=>document.querySelector('#scale-low').textContent==='3.00M'&&document.querySelector('#scale-high').textContent==='30.00M');
+  await page.locator('#manual-high').fill('2');
+  await page.locator('#manual-error').waitFor({state:'visible'});
+  assert.equal(await page.locator('#scale-high').innerText(),'30.00M');
+  await page.locator('#manual-high').fill('30');
+  await page.locator('#manual-error').waitFor({state:'hidden'});
   await page.locator('[data-cvd="normalized"]').click();
   assert.equal(await page.locator('#cvd-legend button').count(),6);
   assert.doesNotMatch(await page.locator('#cvd-legend').innerText(),/< \$100|≥ \$10M/);
@@ -106,20 +100,20 @@ try{
   await page.locator('[data-period="1d"]').click();
   await page.waitForFunction(()=>document.querySelector('#price-range').textContent==='±5%');
   assert.equal(await page.locator('#volume-input').inputValue(),'5');
-  await page.locator('[data-filter="percentile"]').click();
-  await page.locator('#percentile-low').fill('70');await page.locator('#percentile-low').dispatchEvent('input');
+  await page.locator('[data-filter="manual"]').click();
+  await page.locator('#manual-low').fill('2');await page.locator('#manual-low').dispatchEvent('input');
   await page.locator('[data-period="1w"]').click();
   await page.waitForFunction(()=>document.querySelector('#price-range').textContent==='±10%');
   assert.equal(await page.locator('#volume-input').inputValue(),'8');
   assert.equal(await page.locator('[data-filter="usdt"]').getAttribute('aria-pressed'),'true');
-  await page.locator('[data-filter="percentile"]').click();
-  assert.equal(await page.locator('#percentile-low').inputValue(),'85');
+  await page.locator('[data-filter="manual"]').click();
+  assert.equal(await page.locator('#manual-low').inputValue(),'3');
   await page.locator('[data-filter="usdt"]').click();
   await page.locator('#volume-input').fill('5');
   await page.locator('[data-period="1d"]').click();
   await page.waitForFunction(()=>document.querySelector('#price-range').textContent==='±5%');
-  assert.equal(await page.locator('[data-filter="percentile"]').getAttribute('aria-pressed'),'true');
-  assert.equal(await page.locator('#percentile-low').inputValue(),'70');
+  assert.equal(await page.locator('[data-filter="manual"]').getAttribute('aria-pressed'),'true');
+  assert.equal(await page.locator('#manual-low').inputValue(),'2');
   await page.locator('[data-filter="usdt"]').click();
   await page.locator('[data-cvd="absolute"]').click();
   assert.equal(await page.locator('[data-cvd="absolute"]').getAttribute('aria-pressed'),'true');

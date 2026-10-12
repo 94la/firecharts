@@ -131,11 +131,6 @@ html[data-client=touch] .cvd-legend button{min-height:36px}html[data-client=touc
 @media(max-width:780px){html[data-client=touch] .toolbar .zoom-control{display:none}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 
-.access-page{min-height:100svh;display:grid;place-items:center;padding:24px}
-.access-panel{max-width:540px;padding:40px;background:#142018;border-radius:24px}
-.access-brand{color:#bbef1f;font-weight:700;letter-spacing:.02em;margin-bottom:32px}
-.access-panel h1{font-size:clamp(24px,5vw,34px);line-height:1.2;margin-bottom:20px}
-.access-panel p:last-child{color:#a5b1ad;line-height:1.7}
 
 .flow-card{padding:24px;margin:18px 0}.flow-values{font-size:15px;line-height:1.8;font-variant-numeric:tabular-nums}.flow-track{height:8px;background:#ff0055;border-radius:8px;overflow:hidden;margin:16px 0}.flow-track>div{height:100%;background:#bbef1f;transition:width .2s}footer a{color:inherit;font-size:inherit;font-weight:inherit}.candle-engine{position:absolute;opacity:0;pointer-events:none;left:0;top:0}
 
@@ -213,7 +208,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,summary:focus-visible,c
 .chart-foot{padding-left:var(--card-space);padding-right:var(--card-space)}
 .cvd-legend{padding-left:var(--card-space);padding-right:var(--card-space)}
 
-.load-stats{display:grid;gap:12px;margin-top:18px}.load-stats>span{display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--muted);font-size:11px}.load-stats strong{color:var(--text);font-size:12px;font-variant-numeric:tabular-nums}
 
 .bottom-line{flex-wrap:wrap;row-gap:8px;line-height:1.6}.bottom-line>span{min-width:0;overflow-wrap:anywhere}.bottom-line>span:last-child{display:flex;flex-wrap:wrap;gap:4px 12px}.bottom-line .separator{margin:0}
 @media(max-width:600px){.bottom-line{align-items:flex-start;flex-direction:column}.bottom-line .separator{display:none}.cvd-legend{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px}.cvd-legend button{white-space:nowrap;min-width:0;font-size:10px}.cvd-legend button span{flex-shrink:0}}
+
+.number-field:focus-within{box-shadow:0 0 0 2px var(--accent);background:#17251a}.number-field input:focus,.number-field input:focus-visible{outline:none;box-shadow:none}.number-field input::placeholder{font-size:12px;color:var(--muted);opacity:1}

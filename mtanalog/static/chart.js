@@ -55,7 +55,7 @@ export function aggregateCandles(candles, minutes=1){
 export class Charts {
   constructor(heat,cvd,onScale){
     this.heat=heat;this.cvd=cvd;this.onScale=onScale;this.data=null;
-    this.view=[0,1];this.priceView=[0,1];this.touches=new Map();this.filter={type:'usdt',minimum:5e6,lower:67,upper:99};
+    this.view=[0,1];this.priceView=[0,1];this.touches=new Map();this.filter={type:'usdt',minimum:5e6,maximum:25e6};
     this.normalized=false;this.visible=SERIES.map(([, ,hidden])=>!hidden);
     this.pointer=null;this.drag=null;this.left=16;this.right=68;
     this.observer=new ResizeObserver(()=>this.draw());this.observer.observe(heat);this.observer.observe(cvd);
@@ -172,8 +172,8 @@ export class Charts {
     const d=this.data;
     if(this.volumeData!==d){this.volumeData=d;this.volumes=d.liquidity.flatMap(col=>col?col.map(pair=>pair[1]):[]).filter(v=>v>0).sort((a,b)=>a-b);}
     const volumes=this.volumes;
-    let minimum=this.filter.type==='percentile'?percentile(volumes,this.filter.lower):this.filter.minimum;
-    let maximum=this.filter.type==='percentile'?percentile(volumes,this.filter.upper):percentile(volumes.filter(v=>v>=minimum),99.5);
+    let minimum=this.filter.minimum;
+    let maximum=this.filter.type==='manual'?this.filter.maximum:percentile(volumes.filter(v=>v>=minimum),99.5);
     if(this.filter.type==='usdt'){
       maximum=Math.max(minimum*2,maximum,1);
       const magnitude=10**Math.floor(Math.log10(maximum));maximum=Math.ceil(maximum/(magnitude/2))*magnitude/2;
@@ -192,7 +192,11 @@ export class Charts {
     for(const c of columns){
       const col=d.liquidity[c],values=new Map(col??[]),pixels=ctx.createImageData(1,d.rows);
       for(let row=0;row<d.rows;row++){
-        const value=values.get(row)??0,color=col===null?[49,59,54]:value<minimum||value===0?[16,25,20]:heatColor((value-minimum)/(maximum-minimum));
+        const value=values.get(row)??0;
+        let color;
+        if(col===null)color=[49,59,54];
+        else if(value===0||value<minimum)color=[16,25,20];
+        else color=heatColor((value-minimum)/(maximum-minimum));
         const offset=(d.rows-1-row)*4;
         pixels.data[offset]=color[0];pixels.data[offset+1]=color[1];pixels.data[offset+2]=color[2];pixels.data[offset+3]=255;
       }

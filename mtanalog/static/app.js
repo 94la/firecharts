@@ -2,7 +2,7 @@ import {mergeUpdate} from './updates.js';
 import {Charts,SERIES,money,utc} from './chart.js';
 
 const $=id=>document.getElementById(id);
-let visitor;try{visitor=sessionStorage.getItem('chart-visitor')||crypto.randomUUID();sessionStorage.setItem('chart-visitor',visitor);}catch{visitor=crypto.randomUUID();}
+if(location.hash.startsWith('#access='))history.replaceState(null,'',location.pathname+location.search);
 // Input capabilities choose the client; viewport size only controls layout.
 const clientQueries={fine:matchMedia('(pointer: fine)'),hover:matchMedia('(hover: hover)'),coarse:matchMedia('(pointer: coarse)')};
 function updateClient(){
@@ -25,8 +25,8 @@ updateClient();
 
 let mode='1d',filterType='usdt',data=null,busy=false,sequence=0,connectionFailed=false;
 const priceSettings={'1d':{step:200,range:5},'1w':{step:200,range:10}};
-const filterSettings={'1d':{type:'usdt',volume:5,lower:67,upper:99},'1w':{type:'usdt',volume:5,lower:67,upper:99}};
-let pendingPrice=false,accessTimer=null,pendingResume=false,hiddenAt=0;
+const filterSettings={'1d':{type:'usdt',volume:5,lower:5,upper:25},'1w':{type:'usdt',volume:5,lower:5,upper:25}};
+let pendingPrice=false,pendingResume=false,hiddenAt=0;
 let serverTime=Date.now(),clockSync=performance.now();
 const serverNow=()=>serverTime+performance.now()-clockSync;
 const charts=new Charts($('heatmap'),$('cvd'),(low,high)=>{
@@ -42,26 +42,32 @@ function selected(attribute,value){
   });
 }
 let filterFrame=null;
+function filterControls(){
+  $('usdt-controls').hidden=filterType!=='usdt';$('manual-controls').hidden=filterType!=='manual';
+  for(const id of ['price-step-slider','price-margin-slider']){
+    $(id).hidden=filterType==='manual';$(id).nextElementSibling.hidden=filterType==='manual';
+  }
+}
 function scheduleFilter(){
-  const lower=Number($('percentile-low').value),upper=Number($('percentile-high').value);
-  $('percentile-low-value').textContent=lower+'%';$('percentile-high-value').textContent=upper+'%';
-  filterSettings[mode]={type:filterType,volume:Math.max(0,Math.min(100,Number($('volume-input').value)||0)),lower,upper};
   if(filterFrame!==null)return;
   filterFrame=requestAnimationFrame(()=>{filterFrame=null;filter();});
 }
 function filter(){
   const minimum=Math.max(0,Math.min(100,Number($('volume-input').value)||0))*1e6;
-  const lower=Number($('percentile-low').value),upper=Number($('percentile-high').value);
-  $('percentile-low-value').textContent=lower+'%';$('percentile-high-value').textContent=upper+'%';
-  filterSettings[mode]={type:filterType,volume:minimum/1e6,lower,upper};
-  charts.setFilter({type:filterType,minimum,lower,upper});
+  const lowInput=$('manual-low'),highInput=$('manual-high');
+  const lower=Number(lowInput.value),upper=Number(highInput.value);
+  const invalid=lowInput.value===''||highInput.value===''||!Number.isFinite(lower)||!Number.isFinite(upper*1e6)||lower<0||upper<=lower;
+  $('manual-error').hidden=filterType!=='manual'||!invalid;
+  if(filterType==='manual'&&invalid)return;
+  filterSettings[mode]={type:filterType,volume:minimum/1e6,lower:invalid?filterSettings[mode].lower:lower,upper:invalid?filterSettings[mode].upper:upper};
+  charts.setFilter({type:filterType,minimum:filterType==='manual'?lower*1e6:minimum,maximum:upper*1e6});
 }
 function restoreFilter(){
   const setting=filterSettings[mode];filterType=setting.type;
   selected('data-filter',filterType);
   $('volume-input').value=setting.volume;$('volume-slider').value=setting.volume;
-  $('percentile-low').value=setting.lower;$('percentile-high').value=setting.upper;
-  $('usdt-controls').hidden=filterType!=='usdt';$('percentile-controls').hidden=filterType!=='percentile';
+  $('manual-low').value=setting.lower;$('manual-high').value=setting.upper;
+  $('manual-error').hidden=true;filterControls();
 }
 function renderStats(){
   if(!data||data.empty)return;
@@ -96,12 +102,9 @@ async function load(reset=false,full=false){
   busy=true;$('refresh').disabled=true;$('apply-price').disabled=true;
   if(!data||reset)$('loading').hidden=false;
   try{
-    const response=await fetch('/api/chart?'+new URLSearchParams(params),{cache:'no-store',headers:{'X-Chart-Visitor':visitor},signal:AbortSignal.timeout(25000)});
-    if(response.status===401){window.location.replace('/');return;}
+    const response=await fetch('/api/chart?'+new URLSearchParams(params),{cache:'no-store',signal:AbortSignal.timeout(25000)});
     const responseTime=Date.parse(response.headers.get('Date'));
     if(Number.isFinite(responseTime)){serverTime=responseTime;clockSync=performance.now();}
-    const expires=Number(response.headers.get('X-Access-Expires'));
-    if(expires){clearTimeout(accessTimer);accessTimer=setTimeout(()=>window.location.replace('/'),Math.max(0,expires*1000-serverNow()));}
     const result=await response.json();
     if(!response.ok)throw new Error(result.error||'Не удалось обновить график.');
     if(current!==sequence||requestedMode!==mode||charts.touches.size)return;
@@ -121,16 +124,11 @@ document.querySelectorAll('[data-period]').forEach(button=>button.addEventListen
 }));
 document.querySelectorAll('[data-filter]').forEach(button=>button.addEventListener('click',()=>{
   filterType=button.dataset.filter;selected('data-filter',filterType);
-  $('usdt-controls').hidden=filterType!=='usdt';$('percentile-controls').hidden=filterType!=='percentile';filter();
+  filterControls();filter();
 }));
 $('volume-input').addEventListener('input',()=>{$('volume-slider').value=$('volume-input').value;scheduleFilter();});
 $('volume-slider').addEventListener('input',()=>{$('volume-input').value=$('volume-slider').value;scheduleFilter();});
-$('percentile-low').addEventListener('input',()=>{
-  if(Number($('percentile-low').value)>=Number($('percentile-high').value))$('percentile-high').value=Number($('percentile-low').value)+1;scheduleFilter();
-});
-$('percentile-high').addEventListener('input',()=>{
-  if(Number($('percentile-high').value)<=Number($('percentile-low').value))$('percentile-low').value=Number($('percentile-high').value)-1;scheduleFilter();
-});
+for(const id of ['manual-low','manual-high'])$(id).addEventListener('input',scheduleFilter);
 document.querySelectorAll('[data-cvd]').forEach(button=>button.addEventListener('click',()=>{
   charts.normalized=button.dataset.cvd==='normalized';selected('data-cvd',button.dataset.cvd);charts.draw();
 }));
@@ -215,21 +213,3 @@ document.querySelectorAll('[data-flow]').forEach(button=>button.addEventListener
 function updateClock(){const now=serverNow();$('utc-clock').textContent=utc(now).slice(11)+' UTC';$('utc-clock').dateTime=new Date(now).toISOString();}
 updateClock();setInterval(()=>{if(!document.hidden)updateClock();},1000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)updateClock();});
-
-let ownerMetrics=null;
-async function loadMetrics(){
- if(document.hidden)return;
- try{
-  const response=await fetch('/api/load');if(!response.ok){if(response.status===401||response.status===403)ownerMetrics=false;return;}
-  const m=await response.json();ownerMetrics=true;$('server-load').hidden=false;
-  $('load-visitors').textContent=m.active_visitors_5m;
-  $('load-requests').textContent=m.requests_5m;
-  $('load-latency').textContent=m.response_p95_ms+' мс';
-  $('load-cpu').textContent=m.web_cpu_pct+'%';
-  $('load-system').textContent=m.load_average[0].toFixed(2)+' / '+m.cpu_count;
-  $('load-peak').textContent=Math.max(0,...m.history.map(r=>r.requests));
-  $('load-errors').textContent=m.errors_5m+' / '+m.rejected_5m;
-  $('load-memory').textContent=m.memory.MemAvailable?(m.memory.MemAvailable/1073741824).toFixed(1)+' ГБ':'—';
- }catch{}
-}
-loadMetrics();setInterval(()=>{if(ownerMetrics!==false)loadMetrics();},30000);

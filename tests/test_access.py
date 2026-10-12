@@ -38,6 +38,18 @@ class AccessTests(unittest.TestCase):
             self.assertTrue(permission(config,token(guest),now=201)[0])
             self.assertTrue(permission(config,permanent,now=201)[0])
 
+    def test_permanent_guest_rotation_and_expiring_replacement(self):
+        with tempfile.TemporaryDirectory() as root:
+            config={'data_dir':root,'web_access_restricted':True}
+            guest=Path(root)/'guest';owner=Path(root)/'owner'
+            self.assertIsNone(invite(config,'https://chart.example',guest,owner,hours=None,now=100))
+            permanent=token(guest)
+            self.assertEqual(permission(config,permanent,now=10**12),(True,None))
+            invite(config,'https://chart.example',guest,hours=1,now=200)
+            self.assertFalse(permission(config,permanent,now=201)[0])
+            self.assertEqual(permission(config,token(guest),now=3800),(False,None))
+            self.assertEqual(permission(config,token(owner),now=10**12),(True,None))
+
     def test_fail_closed_missing_malformed_state_and_invalid_inputs(self):
         with tempfile.TemporaryDirectory() as root:
             config={'data_dir':root,'web_access_restricted':True}
@@ -49,49 +61,30 @@ class AccessTests(unittest.TestCase):
             with self.assertRaises(ValueError):invite(config,'https://chart.example',Path(root)/'guest')
             self.assertEqual(permission({'data_dir':root},''),(True,None))
 
-    def test_http_gate_cookie_expiry_no_bypass_and_origin(self):
+    def test_public_http_has_no_gate_or_monitoring(self):
         with tempfile.TemporaryDirectory() as root:
-            config={'data_dir':root,'web_access_restricted':True,'price_step':200}
-            guest=Path(root)/'guest';owner=Path(root)/'owner'
-            end=invite(config,'https://chart.example',guest,owner)
-            service=ChartService(config)
+            service=ChartService({'data_dir':root,'price_step':200})
             server=ThreadingHTTPServer(('127.0.0.1',0),handler_for(service))
             thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
             base=f'http://127.0.0.1:{server.server_port}'
-            def request(route,cookie=None,body=None,origin=None):
-                headers={'Host':'chart.example','Connection':'close'}
-                if cookie:headers['Cookie']=COOKIE+'='+cookie
-                if body is not None:headers['Content-Type']='application/json'
-                if origin:headers['Origin']=origin
-                return urllib.request.urlopen(urllib.request.Request(base+route,data=body,headers=headers))
             try:
-                with request('/') as r:self.assertIn('Просмотр по приглашению',r.read().decode())
-                with request('/healthz') as r:self.assertEqual(r.status,200)
-                with request('/access.js') as r:self.assertEqual(r.status,200)
-                for route in ['/api/chart','/readyz','/app.js','/data/web-access.json','/?access='+token(guest)]:
-                    if route.startswith('/?'):
-                        with request(route) as r:self.assertIn('Просмотр по приглашению',r.read().decode())
-                        continue
-                    with self.assertRaises(urllib.error.HTTPError) as error:request(route)
-                    self.assertEqual(error.exception.code,401)
-                with self.assertRaises(urllib.error.HTTPError) as error:request('/api/load',cookie=token(guest))
-                self.assertEqual(error.exception.code,403)
-                with request('/api/load',cookie=token(owner)) as r:
-                    self.assertIn('history',json.load(r))
-                body=json.dumps({'token':token(guest)}).encode()
-                with self.assertRaises(urllib.error.HTTPError) as error:request('/api/access',body=body,origin='https://attacker.example')
-                self.assertEqual(error.exception.code,403)
-                with request('/api/access',body=body,origin='https://chart.example') as r:
-                    cookie=r.headers['Set-Cookie']
-                    for flag in ['Secure','HttpOnly','SameSite=Lax','Path=/']:self.assertIn(flag,cookie)
-                    self.assertNotIn(token(guest),r.read().decode())
-                with patch('mtanalog.web.chart_data',return_value={'empty':True}) as build:
-                    with request('/api/chart',cookie=token(guest)) as r:
-                        self.assertEqual(r.status,200);self.assertEqual(int(r.headers['X-Access-Expires']),int(end))
-                    with patch('mtanalog.access.time.time',return_value=end):
-                        with self.assertRaises(urllib.error.HTTPError) as error:request('/api/chart',cookie=token(guest))
-                        self.assertEqual(error.exception.code,401)
-                        with request('/',cookie=token(owner)) as r:self.assertIn(b'id="dashboard"',r.read())
-                    build.assert_called_once()
+                with urllib.request.urlopen(base+'/') as response:
+                    page=response.read()
+                    self.assertIn(b'id="dashboard"',page)
+                    self.assertNotIn(b'id="server-load"',page)
+                    self.assertIsNone(response.headers.get('Set-Cookie'))
+                with patch('mtanalog.web.chart_data',return_value={'empty':True}):
+                    with urllib.request.urlopen(base+'/api/chart') as response:
+                        self.assertEqual(response.status,200)
+                        self.assertIsNone(response.headers.get('X-Access-Expires'))
+                for route in ['/api/load','/access.js','/data/web-access.json']:
+                    with self.assertRaises(urllib.error.HTTPError) as error:
+                        urllib.request.urlopen(base+route)
+                    self.assertEqual(error.exception.code,404)
+                with urllib.request.urlopen(base+'/enter') as response:
+                    self.assertEqual(response.url,base+'/')
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    urllib.request.urlopen(urllib.request.Request(base+'/api/access',data=b'{}'))
+                self.assertEqual(error.exception.code,404)
             finally:
                 server.shutdown();server.server_close();thread.join()

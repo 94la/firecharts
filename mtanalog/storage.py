@@ -77,6 +77,7 @@ class Store:
         self.db.execute('PRAGMA busy_timeout=30000')
         self.db.executescript('''
         CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE IF NOT EXISTS book_coverage(time INTEGER PRIMARY KEY,low REAL NOT NULL,high REAL NOT NULL,update_id INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS liquidity(
             minute INTEGER PRIMARY KEY, covered_ms INTEGER NOT NULL,
             low REAL, high REAL, bins BLOB NOT NULL);
@@ -179,6 +180,9 @@ class Store:
         os.replace(temporary, target)
         sync_directory(target.parent)
 
+    def coverage(self,stamp,book):
+        self.db.execute('INSERT OR REPLACE INTO book_coverage VALUES(?,?,?,?)',(stamp,book.low,book.high,book.update_id))
+
     def save_minute(self, minute, bins, covered_ms, low, high, first_ms=None, last_ms=None):
         self.db.execute('INSERT OR REPLACE INTO liquidity '
                         '(minute,covered_ms,low,high,bins,first_ms,last_ms) VALUES(?,?,?,?,?,?,?)',
@@ -247,6 +251,8 @@ class Store:
                 path.unlink()
         for table in ('liquidity', 'cvd', 'prices'):
             self.db.execute(f'DELETE FROM {table} WHERE minute < ?', (cutoff // 60000 * 60000,))
+        coverage_anchor=self.db.execute('SELECT max(time) FROM book_coverage WHERE time<?',(cutoff,)).fetchone()[0]
+        self.db.execute('DELETE FROM book_coverage WHERE time<? AND time!=?',(cutoff,coverage_anchor if coverage_anchor is not None else -1))
         self.db.execute('DELETE FROM gaps WHERE end IS NOT NULL AND end < ?', (cutoff,))
         self.flush()
 

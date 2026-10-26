@@ -33,6 +33,7 @@ const charts=new Charts($('heatmap'),$('cvd'),(low,high)=>{
   $('scale-low').textContent=money(low,2);$('scale-high').textContent=money(high,2);
 });
 
+
 function setConnection(text,offline=false){
   $('connection').classList.toggle('offline',offline);$('connection').querySelector('span').textContent=text;
 }
@@ -191,7 +192,7 @@ for(const id of ['price-step','price-margin']){
   input.addEventListener('blur',()=>{if(input.value==='')input.value=previous;syncPriceSliders();});
 }
 
-document.fonts.ready.then(()=>charts.draw());
+document.fonts.ready.then(()=>{charts.draw();});
 
 let flowMinutes=5;
 function renderFlow(){

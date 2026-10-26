@@ -14,6 +14,7 @@ from websockets.asyncio.client import connect
 
 from .core import Book, MinuteMap, SequenceGap, trade_values
 from .storage import Store
+from .depth_refresh import DepthRefresh
 
 LOG = logging.getLogger(__name__)
 
@@ -173,6 +174,8 @@ async def collect(config, duration=None):
             snapshot_task = None
             ready = False
             snapshot_ready_ms = 0
+            refresh=DepthRefresh(lambda:rest(config,'/api/v3/depth',symbol=config['symbol'],limit=5000),
+                                 config.get('depth_snapshot_seconds',15),now_ms)
             try:
                 while not stop.is_set() and time.monotonic() < deadline:
                     if reader.done():
@@ -199,6 +202,8 @@ async def collect(config, duration=None):
                                 snapshot = await snapshot_task
                                 snapshot_task = None
                                 snapshot_ready_ms = now_ms()
+                                refresh.last_success_ms=snapshot_ready_ms
+                                refresh.next_at=time.monotonic()+refresh.interval
                                 book.snapshot(snapshot)
                                 store.raw('snapshot', snapshot, now_ms())
                                 store.checkpoint(book.export(), now_ms(), book.low, book.high)
@@ -211,6 +216,7 @@ async def collect(config, duration=None):
                                 store.close_gap(depth_gap, max(received, snapshot_ready_ms))
                                 depth_gap = None
                             chart.update(max(received, snapshot_ready_ms), book)
+                            store.coverage(max(received,snapshot_ready_ms),book)
                             backoff = 1
                             LOG.info('Book synchronized at %s; known initial band %.2f..%.2f',
                                      book.update_id, book.low, book.high)
@@ -219,6 +225,18 @@ async def collect(config, duration=None):
                             chart.update(received, book)
                             last_depth = received
                             events += 1
+                            refresh.remember(event)
+                    if ready:
+                        renewed=refresh.poll(book)
+                        if renewed is not None:
+                            effective=max(received,refresh.last_success_ms,chart.last_ms or 0)
+                            chart.advance(effective)
+                            record=book.refresh_record(renewed)
+                            book=renewed
+                            store.raw('book_refresh',record,effective)
+                            store.coverage(effective,book)
+                            chart.update(effective,book)
+                            LOG.info('Book coverage refreshed at %s; full band %.2f..%.2f',book.update_id,book.low,book.high)
                     current = now_ms()
                     # Detect a stalled depth feed even if trades keep arriving.
                     if ready and last_depth and queue.empty() and current - last_depth > 15000:
@@ -233,7 +251,10 @@ async def collect(config, duration=None):
                             'depth_events_this_run': events, 'trades_this_run': trades,
                             'queue_events': queue.qsize(), 'processing_lag_ms': max(0, current-received),
                             'bid_levels': len(book.bids), 'ask_levels': len(book.asks),
-                            'known_low': book.low, 'known_high': book.high})
+                            'known_low': book.low, 'known_high': book.high,
+                            'book_snapshot_ms':refresh.last_success_ms,
+                            'book_refreshes_this_connection':refresh.count,
+                            'book_refresh_error':refresh.error})
                         store.flush()
                         last_flush = current
                     if ready and current - last_checkpoint >= config['checkpoint_seconds'] * 1000:
@@ -266,6 +287,7 @@ async def collect(config, duration=None):
                         pass
                 backoff = min(60, backoff * 2)
             finally:
+                await refresh.close()
                 reader.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await reader

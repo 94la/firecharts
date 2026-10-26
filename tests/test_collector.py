@@ -43,6 +43,32 @@ class CollectorTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(result['cvd_matches_sqlite'])
             self.assertEqual(result['unique_trades'], 3)
 
+    async def test_periodic_coverage_refresh_preserves_stream_and_raw_replay(self):
+        with tempfile.TemporaryDirectory() as root:
+            config=dict(data_dir=root,base_price_step=25,symbol='BTCUSDT',checkpoint_seconds=3600,retention_days=14,min_free_gib=0,depth_snapshot_seconds=.005)
+            calls=0;stamp=int(time.time()*1000)
+            async def feed(config,queue,stop):
+                queue.put_nowait((stamp,dict(e='aggTrade',a=10,p='100',q='1',m=False,T=stamp)))
+                queue.put_nowait((stamp,dict(e='depthUpdate',U=101,u=101,b=[['80','10']],a=[])))
+                await asyncio.sleep(.02)
+                queue.put_nowait((stamp+20,dict(e='depthUpdate',U=102,u=102,b=[],a=[])))
+                await asyncio.sleep(.02)
+                queue.put_nowait((stamp+40,dict(e='depthUpdate',U=103,u=103,b=[['95','8']],a=[])))
+                await stop.wait()
+            def fake(config,path,**params):
+                nonlocal calls
+                calls+=1
+                if calls==1:return dict(lastUpdateId=100,bids=[['100','1'],['90','1']],asks=[['110','1'],['120','1']])
+                return dict(lastUpdateId=102,bids=[['95','3'],['85','2']],asks=[['105','1'],['115','1']])
+            with patch('mtanalog.collector.receive',feed),patch('mtanalog.collector.rest',fake):await collect(config,duration=.1)
+            store=Store(root,read_only=True)
+            bands=store.db.execute('SELECT low,high FROM book_coverage ORDER BY time').fetchall()
+            self.assertEqual(bands[-1],(85,115));self.assertGreaterEqual(len(bands),2)
+            self.assertEqual(store.db.execute("SELECT count(*) FROM gaps WHERE kind='depth'").fetchone()[0],0)
+            store.close()
+            result=verify(config)
+            self.assertTrue(result['book_matches_checkpoint']);self.assertTrue(result['known_band_matches_checkpoint']);self.assertTrue(result['cvd_matches_sqlite'])
+
     async def test_transient_backfill_error_does_not_leave_false_cvd_gap(self):
         with tempfile.TemporaryDirectory() as root:
             config = {'data_dir': root, 'base_price_step': 25, 'symbol': 'BTCUSDT',

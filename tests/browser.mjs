@@ -126,12 +126,12 @@ try{
   await page.locator('#price-step').click();
   assert.equal(await page.locator('#price-step').inputValue(),'');
   assert.equal(await page.locator('#price-step').getAttribute('placeholder'),'25–2000');
-  await page.locator('.settings-heading h2').click();
+  await page.locator('#fire-settings .settings-heading h2').click();
   assert.equal(await page.locator('#price-step').inputValue(),'200','Empty edit must restore the previous value');
   await page.locator('#price-margin').click();
   assert.equal(await page.locator('#price-margin').inputValue(),'');
   assert.equal(await page.locator('#price-margin').getAttribute('placeholder'),'0.5–20');
-  await page.locator('.settings-heading h2').click();
+  await page.locator('#fire-settings .settings-heading h2').click();
   assert.equal(await page.locator('#price-margin').inputValue(),'5');
   await page.locator('#price-step').fill('100');
   await page.locator('#price-margin').fill('3');

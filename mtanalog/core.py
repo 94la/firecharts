@@ -43,6 +43,8 @@ class Book:
         self.update_id = payload['lastUpdateId']
         self.low = min(self.bids) / 100 if self.bids else None
         self.high = max(self.asks) / 100 if self.asks else None
+        if 'known_low' in payload and 'known_high' in payload:
+            self.low,self.high=payload['known_low'],payload['known_high']
 
     def apply(self, event):
         if event['u'] <= self.update_id:
@@ -54,6 +56,36 @@ class Book:
                 self._set(side, p, q)
         self.update_id = event['u']
         return True
+
+    def refreshed(self,payload,events):
+        """Rebase at the same sequence frontier; preserve continuously observed far levels."""
+        candidate=Book(self.step//100);candidate.snapshot(payload)
+        if candidate.low is None or candidate.high is None:
+            raise ValueError('Empty REST book')
+        lower,upper=cents(candidate.low),cents(candidate.high)
+        for side,levels in [('b',self.bids),('a',self.asks)]:
+            for price,quantity in levels.items():
+                if price<lower or price>upper:
+                    candidate._set(side,str(price/100),str(quantity))
+        for event in events:candidate.apply(event)
+        if candidate.update_id!=self.update_id:
+            raise SequenceGap('Refreshed snapshot does not match live sequence frontier')
+        return candidate
+
+    def refresh_record(self,candidate):
+        if self.update_id!=candidate.update_id:
+            raise SequenceGap('Coverage rebase must keep the live frontier')
+        record=dict(lastUpdateId=self.update_id,known_low=candidate.low,known_high=candidate.high)
+        for side,old,new in [('b',self.bids,candidate.bids),('a',self.asks,candidate.asks)]:
+            record[side]=[[str(p/100),str(new.get(p,0))] for p in sorted(old.keys()|new.keys()) if old.get(p,0)!=new.get(p,0)]
+        return record
+
+    def apply_refresh(self,record):
+        if self.update_id!=record['lastUpdateId']:
+            raise SequenceGap('Coverage refresh requires matching live frontier')
+        for side in ('b','a'):
+            for p,q in record[side]:self._set(side,p,q)
+        self.low,self.high=record['known_low'],record['known_high']
 
     def export(self):
         return {'lastUpdateId': self.update_id,

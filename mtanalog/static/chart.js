@@ -268,9 +268,24 @@ export class Charts {
       ctx.strokeStyle='#9caf9f70';ctx.lineWidth=.7;ctx.setLineDash([4,4]);ctx.beginPath();let previous=false;
       d.known.forEach((bounds,c)=>{
         if(!bounds){previous=false;return;}
-        const x=this.x(d.start_ms+(c+.5)*(d.end_ms-d.start_ms)/d.columns,p);
+        const stamp=d.start_ms+(c+.5)*(d.end_ms-d.start_ms)/d.columns;
+        if(d.book_band?.length&&stamp>=d.book_band[0][0])return;
+        const x=this.x(stamp,p);
         if(previous)ctx.lineTo(x,y(bounds[side]));else ctx.moveTo(x,y(bounds[side]));previous=true;
-      });ctx.stroke();ctx.setLineDash([]);
+      });ctx.stroke();
+      if(d.book_band?.length){
+        ctx.beginPath();let last=null;
+        const interrupted=(a,b)=>d.gaps.some(([kind,begin,end])=>kind==='depth'&&begin<b&&(end??d.observed_ms)>a);
+        for(const band of d.book_band){
+          const x=this.x(band[0],p),yy=y(band[side+1]);
+          if(last&&!interrupted(last[0],band[0])){ctx.lineTo(x,y(last[side+1]));ctx.lineTo(x,yy);}
+          else ctx.moveTo(x,yy);
+          last=band;
+        }
+        if(last&&!interrupted(last[0],d.observed_ms??d.end_ms))ctx.lineTo(this.x(d.observed_ms??d.end_ms,p),y(last[side+1]));
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
     }
     this.drawCandles(ctx,p);
     this.saveLayer('heatLayer',key,this.heat);
@@ -402,7 +417,9 @@ export class Charts {
       const candle=this.candleLookup?.get(Math.floor(time/60000)*60);
       if(candle){add('O / C',`${candle.open.toFixed(2)} / ${candle.close.toFixed(2)}`);add('H / L',`${candle.high.toFixed(2)} / ${candle.low.toFixed(2)}`);}
       if(!missing&&volume<this.minimum)add('Фильтр','Ниже порога');
-      if(d.known[col]&&(price<d.known[col][0]||price>d.known[col][1]))add('Книга','Частично наблюдаемая');
+      const observed=d.book_band?.findLast(band=>band[0]<=time);
+      const known=observed?observed.slice(1):d.known[col];
+      if(known&&(price<known[0]||price>known[1]))add('Книга','Частично наблюдаемая');
     }else{
       const row=this.cvdValues()[col];SERIES.forEach(([label],i)=>{if(this.visible[i])add(label,row?(this.normalized?row[i].toFixed(3):money(row[i],2)+' USDT'):'Нет данных');});
     }

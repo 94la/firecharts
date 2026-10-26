@@ -260,7 +260,8 @@ def handler_for(service):
             if parsed.path not in files:
                 return self.reply(404, {'error': 'Not found'})
             filename, content_type = files[parsed.path]
-            self.reply(200, (STATIC/filename).read_bytes(), content_type)
+            body = (STATIC/filename).read_bytes()
+            self.reply(200, body, content_type)
 
         def do_HEAD(self):
             self.do_GET()

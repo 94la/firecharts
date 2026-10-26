@@ -139,6 +139,15 @@ def chart_data(config, mode='1d', end_ms=None, price_step=None, margin_pct=None,
                             or invalid is not None and edges[c+1] > invalid)
                     else [round(float(v), 2) for v in cvd[c]] for c in range(columns)]
         collector = json.loads(meta.get('collector', '{}'))
+        book_band=[]
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='book_coverage'").fetchone():
+            anchor=db.execute('SELECT time,low,high FROM book_coverage WHERE time<? ORDER BY time DESC LIMIT 1',(start,)).fetchone()
+            samples=db.execute('SELECT time,low,high FROM book_coverage WHERE time>=? AND time<=? ORDER BY time',(start,actual_end)).fetchall()
+            selected={}
+            for sample in samples:
+                column=min(columns-1,max(0,int(np.searchsorted(edges,sample[0],side='right'))-1))
+                selected[column]=sample
+            book_band=([anchor] if anchor else [])+([samples[0]] if samples and samples[0] not in selected.values() else [])+list(selected.values())
         last_price = prices[-1][2]
         return {**market, 'empty': False, 'mode': mode, 'generated_ms': actual_end,
                 'column_ms': column_ms, 'observed_ms': actual_end,
@@ -148,6 +157,7 @@ def chart_data(config, mode='1d', end_ms=None, price_step=None, margin_pct=None,
                 'coverage': [round(min(1, float(d)/(edges[c+1]-edges[c])), 3)
                              for c, d in enumerate(durations)],
                 'known': [None if not populated[c] else list(known[c]) for c in range(columns)],
+                'book_band':book_band,
                 'prices': [[timestamp, price] for _, timestamp, price in prices],
                 'cvd': cvd_rows, 'gaps': gaps, 'last_price': last_price,
                 'price_change_pct': (last_price/prices[0][2]-1)*100,

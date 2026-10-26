@@ -34,6 +34,9 @@ def verify(config):
                         book.snapshot(event)
                         complete = True
                         snapshots += 1
+                    elif kind == 'book_refresh' and complete and event['lastUpdateId']<=limit:
+                        try:book.apply_refresh(event)
+                        except SequenceGap:complete=False;gaps+=1
                     elif kind == 'depth' and complete and event['u'] <= limit:
                         try:
                             applied += book.apply(event)
@@ -54,6 +57,7 @@ def verify(config):
         with gzip.open(checkpoints[0], 'rt') as stream:
             anchor = json.load(stream)
         book.snapshot(anchor['book'])
+        book.low,book.high=anchor['known_low'],anchor['known_high']
         complete = True
         applied = 0
         for path in raw_paths(root/'raw'):
@@ -65,6 +69,9 @@ def verify(config):
                         if record['kind'] == 'snapshot' and book.update_id < event['lastUpdateId'] <= limit:
                             book.snapshot(event)
                             complete = True
+                        elif record['kind']=='book_refresh' and complete and book.update_id<=event['lastUpdateId']<=limit:
+                            try:book.apply_refresh(event)
+                            except SequenceGap:complete=False
                         elif record['kind'] == 'depth' and complete and book.update_id < event['u'] <= limit:
                             try:
                                 applied += book.apply(event)
@@ -74,6 +81,7 @@ def verify(config):
                 truncated = True
     expected = Book(config['base_price_step'])
     expected.snapshot(latest['book'])
+    expected.low,expected.high=latest['known_low'],latest['known_high']
     book_matches = (complete and book.update_id == limit and
                     book.bids == expected.bids and book.asks == expected.asks)
     db = sqlite3.connect(f'file:{(root/"archive.sqlite").resolve()}?mode=ro', uri=True)
@@ -81,7 +89,8 @@ def verify(config):
     db.close()
     compared = len(stored)
     cvd_matches = bool(stored) and all(deltas.get(key) == value for key, value in stored.items())
-    return {'book_matches_checkpoint': book_matches, 'cvd_matches_sqlite': cvd_matches,
+    return {'book_matches_checkpoint': book_matches,
+            'known_band_matches_checkpoint': book.low==expected.low and book.high==expected.high, 'cvd_matches_sqlite': cvd_matches,
             'replayed_depth_updates': applied, 'raw_snapshots': snapshots,
             'unique_trades': trade_count, 'compared_cvd_rows': compared,
             'sequence_gaps_before_resnapshot': gaps, 'active_or_truncated_gzip': truncated,

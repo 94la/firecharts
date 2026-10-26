@@ -48,6 +48,19 @@ class WebDataTests(unittest.TestCase):
             self.assertLess(week['low'], data['low'])
             self.assertEqual(data['gaps'], [('depth', minute+60000, minute+120000)])
 
+    def test_book_band_uses_observed_snapshot_times_not_minute_average(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as root:
+            minute=fixture(root);store=Store(root)
+            store.coverage(minute+10000,SimpleNamespace(low=83500,high=84500,update_id=1))
+            store.coverage(minute+30000,SimpleNamespace(low=80000,high=82000,update_id=2))
+            store.coverage(minute+140000,SimpleNamespace(low=79000,high=81000,update_id=3))
+            store.close()
+            d=chart_data({'data_dir':root,'price_step':200,'min_liquidity_usdt':5e6},'1d',end_ms=minute+180000,aligned=True)
+            self.assertEqual(list(d['book_band'][0]),[minute+10000,83500,84500])
+            self.assertEqual(list(d['book_band'][-1]),[minute+140000,79000,81000])
+            self.assertTrue(any(row[1]==80000 for row in d['book_band']))
+
     def test_custom_price_bins_range_and_validation(self):
         with tempfile.TemporaryDirectory() as root:
             minute = fixture(root)

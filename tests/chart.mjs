@@ -54,3 +54,15 @@ const {aggregateCandles}=await import('../mtanalog/static/chart.js');
 const combined=aggregateCandles([{time:0,open:100,high:110,low:80,close:105},{time:60,open:105,high:120,low:100,close:115}],5);
 assert.equal(combined.length,1);assert.equal(combined[0].low,80);assert.equal(combined[0].high,120);assert.equal(combined[0].close,115);
 console.log('Candle aggregation preserves intraminute extremes.');
+
+// Mouse drag moves the plot itself on both axes, even at the initial full price range.
+chart.view=[.2,.8];chart.priceView=[0,1];
+const mouse=(id,x,y)=>({...event(id,x,y),pointerType:'mouse'});
+chart.down(mouse(20,400,200),canvas);chart.gesture(mouse(20,450,250),canvas);
+near(chart.view[0],.2-50/916*.6);near(chart.priceView[0],50/457);near(chart.priceView[1],1+50/457);
+chart.up(mouse(20,450,250),canvas);
+chart.view=[.2,.8];chart.priceView=[.2,.8];
+chart.down(touch(21,400,200),canvas);chart.gesture(touch(21,450,250),canvas);
+assert.deepEqual(chart.priceView,[.2,.8]);chart.up(touch(21,450,250),canvas);
+chart.reset();assert.deepEqual(chart.priceView,[0,1]);
+console.log('Mouse diagonal drag and unchanged touch pan passed.');

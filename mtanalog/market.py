@@ -30,12 +30,12 @@ class MarketRequestError(Exception):
         self.retry_after = retry_after
 
 
-def fetch(start=None, end=None, limit=1000):
-    params = dict(symbol='BTCUSDT', interval='1m', limit=limit)
+def fetch(start=None, end=None, limit=1000, symbol='BTCUSDT', rest_url='https://data-api.binance.vision'):
+    params = dict(symbol=symbol, interval='1m', limit=limit)
     if start is not None: params['startTime'] = start
     if end is not None: params['endTime'] = end
     try:
-        with urlopen('https://data-api.binance.vision/api/v3/klines?'+urlencode(params), timeout=10) as response:
+        with urlopen(rest_url+'/api/v3/klines?'+urlencode(params), timeout=10) as response:
             rows = json.load(response)
     except HTTPError as error:
         try: delay = max(0, float(error.headers.get('Retry-After', '300' if error.code in (418,429) else '30')))
@@ -92,7 +92,10 @@ def repair_range(db, cutoff, now):
     return None
 
 
-def start_worker(root, stopping):
+def start_worker(root, stopping, symbol='BTCUSDT', retention_hours=336, earliest=None, rest_url='https://data-api.binance.vision'):
+    private = symbol != 'BTCUSDT' or retention_hours != 336
+    def request(*args, **kwargs):
+        return fetch(*args, **kwargs, **({'symbol':symbol,'rest_url':rest_url} if private else {}))
     def worker():
         lock = (Path(root)/'market.lock').open('a')
         db = None
@@ -117,12 +120,12 @@ def start_worker(root, stopping):
             retry = 15
             while not stopping.is_set():
                 try:
-                    latest = fetch(limit=3 if db.execute('SELECT count(*) FROM candles').fetchone()[0] else 1000)
+                    latest = request(limit=3 if db.execute('SELECT count(*) FROM candles').fetchone()[0] else 1000)
                     db.executemany('INSERT OR REPLACE INTO candles VALUES(?,?,?,?,?,?,?,?)',latest);db.commit()
-                    cutoff = int(time.time()*1000)//MINUTE*MINUTE-14*86400000
+                    cutoff = max(int(time.time()*1000)//MINUTE*MINUTE-int(retention_hours*3600000), earliest or 0)
                     repair = repair_range(db, cutoff, int(time.time()*1000))
                     if repair:
-                        repaired = fetch(*repair)
+                        repaired = request(*repair)
                         db.executemany('INSERT OR REPLACE INTO candles VALUES(?,?,?,?,?,?,?,?)',repaired)
                     db.execute('DELETE FROM candles WHERE time<?',(cutoff,));db.commit()
                     retry = 15

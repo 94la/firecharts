@@ -213,3 +213,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,summary:focus-visible,c
 @media(max-width:600px){.bottom-line{align-items:flex-start;flex-direction:column}.bottom-line .separator{display:none}.cvd-legend{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px}.cvd-legend button{white-space:nowrap;min-width:0;font-size:10px}.cvd-legend button span{flex-shrink:0}}
 
 .number-field:focus-within{box-shadow:0 0 0 2px var(--accent);background:#17251a}.number-field input:focus,.number-field input:focus-visible{outline:none;box-shadow:none}.number-field input::placeholder{font-size:12px;color:var(--muted);opacity:1}
+
+.private-panel{padding:var(--card-space);margin-bottom:20px}.private-add{display:flex;gap:12px;margin:16px 0}.private-add input{min-width:0;flex:1;background:#09110b;border:1px solid #314139;border-radius:12px;color:var(--text);padding:14px;font:inherit;font-size:13px}.private-add .price-apply{width:auto;margin:0;padding:12px 20px}.private-pair{display:flex;align-items:center;gap:10px;border-top:1px solid #eff8ff12;padding:14px 0}.private-pair>span{flex:1;min-width:0}.private-pair small{display:block;color:var(--muted);margin-top:5px;font-size:11px}.private-delete{color:#ff6296}.private-add input:focus{outline:2px solid var(--accent);outline-offset:2px}
+@media(max-width:600px){.private-add{flex-wrap:wrap}.private-add input{flex-basis:100%}.private-add .price-apply{width:100%}.private-pair{flex-wrap:wrap}.private-pair>span{flex-basis:100%}.private-panel .settings-heading{flex-wrap:wrap;gap:12px}}
+
+.chart-wrap canvas:focus,.chart-wrap canvas:focus-visible{outline:none;box-shadow:none;filter:none}

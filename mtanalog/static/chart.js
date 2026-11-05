@@ -7,6 +7,7 @@ export const SERIES = [
 export const money = (value, digits=1) => {
   if (value == null || !Number.isFinite(value)) return '—';
   const abs=Math.abs(value);
+  if(abs>0&&abs<.01)return value.toPrecision(3);
   return abs>=1e6 ? `${(value/1e6).toFixed(digits)}M` : abs>=1e3 ? `${(value/1e3).toFixed(digits)}k` : value.toFixed(digits);
 };
 export const utc = value => new Date(value).toISOString().replace('T',' ').slice(0,19);
@@ -17,11 +18,11 @@ export function percentile(sorted,p){
   return sorted[lower]+((sorted[lower+1]??sorted[lower])-sorted[lower])*fraction;
 }
 
-export function anchoredRange(view,factor,anchor=.5,target=anchor,minSize=1/48){
+export function anchoredRange(view,factor,anchor=.5,target=anchor,minSize=1/48,bounded=true){
   anchor=Math.max(0,Math.min(1,anchor));target=Math.max(0,Math.min(1,target));
   const size=Math.min(1,Math.max(minSize,(view[1]-view[0])*factor));
   const point=view[0]+(view[1]-view[0])*anchor;
-  const start=Math.max(0,Math.min(1-size,point-size*target));
+  const start=bounded?Math.max(0,Math.min(1-size,point-size*target)):point-size*target;
   return [start,start+size];
 }
 
@@ -109,12 +110,12 @@ export class Charts {
     const size=this.view[1]-this.view[0],start=Math.max(0,Math.min(1-size,this.view[0]+size*fraction));
     this.view=[start,start+size];this.pointer=null;this.inspection=false;this.hideTips();this.draw();
   }
-  zoomPrice(factor){this.priceView=anchoredRange(this.priceView,factor,.5,.5,1/100);this.hideTips();this.draw();}
+  zoomPrice(factor){this.priceView=anchoredRange(this.priceView,factor,.5,.5,1/100,false);this.hideTips();this.draw();}
   priceBounds(){const d=this.data;return this.priceView.map(v=>d.low+v*(d.high-d.low));}
   down(event,canvas){
     if(event.button!==0||!this.data||this.data.empty)return;
     event.preventDefault();if(event.pointerType==='mouse'&&canvas.focus)canvas.focus({preventScroll:true});canvas.setPointerCapture(event.pointerId);
-    this.touches.set(event.pointerId,{x:event.clientX,y:event.clientY,canvas});
+    this.touches.set(event.pointerId,{x:event.clientX,y:event.clientY,canvas,pointerType:event.pointerType});
     this.inspection=false;this.cancelHold();this.beginGesture(canvas);this.pointer=null;this.hideTips();this.draw();
     const box=canvas.getBoundingClientRect();
     if(event.pointerType==='touch'&&this.touches.size===1&&this.drag.kind==='pan'
@@ -136,7 +137,7 @@ export class Charts {
     const points=[...this.touches.values()].filter(p=>p.canvas===canvas),box=canvas.getBoundingClientRect();
     if(!points.length){this.drag=null;return;}
     const first=points[0],second=points[1];
-    this.drag={canvas,view:[...this.view],price:[...this.priceView],x:first.x,y:first.y,width:box.width-this.left-this.right,height:box.height-43};
+    this.drag={canvas,view:[...this.view],price:[...this.priceView],x:first.x,y:first.y,width:box.width-this.left-this.right,height:box.height-43,pointerType:first.pointerType};
     if(second){
       this.drag.kind='pinch';this.drag.distance=Math.max(1,Math.hypot(second.x-first.x,second.y-first.y));
       this.drag.midX=(first.x+second.x)/2;this.drag.midY=(first.y+second.y)/2;
@@ -151,19 +152,23 @@ export class Charts {
   }
   gesture(event,canvas){
     if(!this.touches.has(event.pointerId)||!this.drag||this.drag.canvas!==canvas)return false;
-    this.touches.set(event.pointerId,{x:event.clientX,y:event.clientY,canvas});
+    this.touches.set(event.pointerId,{x:event.clientX,y:event.clientY,canvas,pointerType:event.pointerType});
     const g=this.drag,points=[...this.touches.values()].filter(p=>p.canvas===canvas),box=canvas.getBoundingClientRect();
     if(g.kind==='inspect')return false;
     if(Math.hypot(event.clientX-g.x,event.clientY-g.y)>8)this.cancelHold();
     if(g.kind==='pinch'&&points.length>=2){
       const [a,b]=points,midX=(a.x+b.x)/2,midY=(a.y+b.y)/2,factor=g.distance/Math.max(1,Math.hypot(a.x-b.x,a.y-b.y));
       this.view=anchoredRange(g.view,factor,(g.midX-box.left-this.left)/g.width,(midX-box.left-this.left)/g.width);
-      if(canvas===this.heat)this.priceView=anchoredRange(g.price,factor,1-(g.midY-box.top-8)/g.height,1-(midY-box.top-8)/g.height,1/100);
+      if(canvas===this.heat)this.priceView=anchoredRange(g.price,factor,1-(g.midY-box.top-8)/g.height,1-(midY-box.top-8)/g.height,1/100,false);
     }else if(g.kind==='price'){
-      this.priceView=anchoredRange(g.price,Math.exp((event.clientY-g.y)/g.height*3),.5,.5,1/100);
+      this.priceView=anchoredRange(g.price,Math.exp((event.clientY-g.y)/g.height*3),.5,.5,1/100,false);
     }else{
       const size=g.view[1]-g.view[0],delta=(event.clientX-g.x)/g.width*size;
       const a=Math.max(0,Math.min(1-size,g.view[0]-delta));this.view=[a,a+size];
+      if(canvas===this.heat&&g.pointerType==='mouse'){
+        const shift=(event.clientY-g.y)/g.height*(g.price[1]-g.price[0]);
+        this.priceView=g.price.map(value=>value+shift);
+      }
     }
     this.pointer=null;this.hideTips();this.draw();return true;
   }
@@ -220,12 +225,13 @@ export class Charts {
     if(!this.data||this.data.empty)return;
     this.drawHeat();this.drawCvd();this.drawLoupe();
   }
+  formatPrice(value){return this.data?.private_pair?value.toLocaleString('en-US',{maximumFractionDigits:this.data.price_precision??8}):money(value);}
   grid(ctx,p,low,high,normalized=false){
     ctx.lineWidth=1;ctx.textAlign='left';ctx.fillStyle='#b3c1b9';
     for(let i=0;i<=5;i++){
       const y=p.y+p.h*i/5,value=high-(high-low)*i/5;
       ctx.strokeStyle='#a5bca51b';ctx.beginPath();ctx.moveTo(p.x,y);ctx.lineTo(p.x+p.w,y);ctx.stroke();
-      ctx.fillText(normalized?value.toFixed(2):money(value),p.x+p.w+10,y+3);
+      ctx.fillText(normalized?value.toFixed(2):ctx.canvas===this.heat?this.formatPrice(value):money(value),p.x+p.w+10,y+3);
     }
     const [a,b]=this.timeBounds();ctx.textAlign='center';
     const count=p.w<450?3:5;
@@ -295,6 +301,7 @@ export class Charts {
   drawCandles(ctx,p){
     if(!window.LightweightCharts||!this.data.candles?.length)return;
     if(!this.engine){
+      this.candlePrecision=null;
       const host=document.createElement('div');host.className='candle-engine';this.engineHost=host;this.heat.parentElement.append(host);
       const L=window.LightweightCharts;
       this.engine=L.createChart(host,{width:Math.max(1,Math.round(p.w)),height:Math.max(1,Math.round(p.h)),
@@ -306,6 +313,8 @@ export class Charts {
       this.candleSeries=this.engine.addSeries(L.CandlestickSeries,{upColor:CHART_THEME.bull,downColor:CHART_THEME.bear,borderVisible:false,wickUpColor:CHART_THEME.bullWick,wickDownColor:CHART_THEME.bearWick,priceLineVisible:false,lastValueVisible:false,
         autoscaleInfoProvider:()=>({priceRange:{minValue:this.priceBounds()[0],maxValue:this.priceBounds()[1]}})});
     }
+    const precision=this.data.price_precision??2;
+    if(this.candlePrecision!==precision){this.candleSeries.applyOptions({priceFormat:{type:'price',precision,minMove:10**-precision}});this.candlePrecision=precision;}
     const [a,b]=this.timeBounds(),minutes=(b-a)/60000;
     const interval=minutes/p.w>12?60:minutes/p.w>3?15:minutes/p.w>.8?5:1;
     const signature=[this.data.generated_ms,interval,...this.view,...this.priceView,p.w,p.h].join(':');
@@ -409,19 +418,25 @@ export class Charts {
     tip.replaceChildren();const date=document.createElement('small');date.textContent=utc(time)+' UTC';tip.append(date);
     const add=(label,value)=>{const row=document.createElement('div');row.className='tip-row';const l=document.createElement('span'),v=document.createElement('strong');l.textContent=label;v.textContent=value;row.append(l,v);tip.append(row);};
     if(canvas===this.heat){
-      const [low,high]=this.priceBounds(),price=high-(y-p.y)/p.h*(high-low),row=Math.max(0,Math.min(d.rows-1,Math.floor((price-d.low)/d.price_step)));
+      const [low,high]=this.priceBounds(),price=high-(y-p.y)/p.h*(high-low),row=Math.floor((price-d.low)/d.price_step);
       const volume=d.liquidity[col]?.find(([r])=>r===row)?.[1]??0;
-      const missing=d.liquidity[col]===null||d.gaps.some(([kind,a,b])=>kind==='depth'&&time>=a&&time<(b??d.end_ms));
-      add('Цена',`${(d.low+row*d.price_step).toLocaleString('en-US')}–${(d.low+(row+1)*d.price_step).toLocaleString('en-US')}`);
-      add('Объём',missing?'Нет данных':money(volume,2)+' USDT');
+      const missing=row<0||row>=d.rows||d.liquidity[col]===null||d.gaps.some(([kind,a,b])=>kind==='depth'&&time>=a&&time<(b??d.end_ms));
+      add('Цена',`${(d.low+row*d.price_step).toLocaleString('en-US',{maximumFractionDigits:d.price_precision??2})}–${(d.low+(row+1)*d.price_step).toLocaleString('en-US',{maximumFractionDigits:d.price_precision??2})}`);
+      const spread=this.spread;
+      if(spread?.available&&Date.now()-spread.observed_ms<=45000){
+        const precision=d.price_precision??2,fmt=v=>v.toLocaleString('en-US',{maximumFractionDigits:precision});
+        add('Bybit ≈',`${fmt(d.low+row*d.price_step+spread.difference)}–${fmt(d.low+(row+1)*d.price_step+spread.difference)} ${d.quote_asset||'USDT'}`);
+        add('Пересчёт','По текущей разнице, не исторической');
+      }
+      add('Объём',missing?'Нет данных':money(volume,2)+' '+(d.quote_asset||'USDT'));
       const candle=this.candleLookup?.get(Math.floor(time/60000)*60);
-      if(candle){add('O / C',`${candle.open.toFixed(2)} / ${candle.close.toFixed(2)}`);add('H / L',`${candle.high.toFixed(2)} / ${candle.low.toFixed(2)}`);}
+      if(candle){add('O / C',`${candle.open.toFixed(d.price_precision??2)} / ${candle.close.toFixed(d.price_precision??2)}`);add('H / L',`${candle.high.toFixed(d.price_precision??2)} / ${candle.low.toFixed(d.price_precision??2)}`);}
       if(!missing&&volume<this.minimum)add('Фильтр','Ниже порога');
       const observed=d.book_band?.findLast(band=>band[0]<=time);
       const known=observed?observed.slice(1):d.known[col];
       if(known&&(price<known[0]||price>known[1]))add('Книга','Частично наблюдаемая');
     }else{
-      const row=this.cvdValues()[col];SERIES.forEach(([label],i)=>{if(this.visible[i])add(label,row?(this.normalized?row[i].toFixed(3):money(row[i],2)+' USDT'):'Нет данных');});
+      const row=this.cvdValues()[col];SERIES.forEach(([label],i)=>{if(this.visible[i])add(d.private_pair?label.replaceAll('$','')+(i?' '+d.quote_asset:''):label,row?(this.normalized?row[i].toFixed(3):money(row[i],2)+' '+(d.quote_asset||'USDT')):'Нет данных');});
     }
     tip.hidden=false;tip.style.left=Math.max(0,Math.min(box.width-tip.offsetWidth-6,x+14))+'px';tip.style.top=Math.max(0,Math.min(box.height-tip.offsetHeight-6,y+12))+'px';
     if(touch){

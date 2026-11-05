@@ -19,6 +19,8 @@ from .webdata import chart_data, price_settings
 from .storage import Store
 from .market import start_worker
 from .updates import delta
+from .spread import SpreadCache
+from .private_access import COOKIE as PRIVATE_COOKIE, authorized, valid_token
 
 LOG = logging.getLogger(__name__)
 STATIC = Path(__file__).parent/'static'
@@ -97,6 +99,8 @@ class BoundedHTTPServer(ThreadingHTTPServer):
 class ChartService:
     def __init__(self, config):
         self.config = config
+        self.private = None
+        self.spread = None
         self.cache = {}
         self.lock = threading.Lock()
         self.compute = threading.Lock()
@@ -223,8 +227,43 @@ def handler_for(service):
 
         def do_GET(self):
             parsed = urlsplit(self.path)
+            if parsed.path.startswith('/api/private/'):
+                if not authorized(service.config,self.headers.get('Cookie')):
+                    return self.reply(403, {'error':'Доступно только владельцу.'})
+                if service.private is None:
+                    return self.reply(503, {'error':'Личная панель временно недоступна.'})
+                try:
+                    query=parse_qs(parsed.query)
+                    if parsed.path == '/api/private/pairs':
+                        return self.reply(200,service.private.list())
+                    if parsed.path == '/api/private/catalog':
+                        return self.reply(200,{'symbols':service.private.catalog()})
+                    if parsed.path == '/api/private/spread':
+                        name=query.get('symbol',[''])[0]
+                        with service.private.lock:
+                            item=service.private.state['pairs'].get(name)
+                            if not item or item.get('deleting'):raise ValueError('Сбор пары не запущен.')
+                        return self.reply(200,service.spread.get(name) if service.spread else {'available':False})
+                    if parsed.path == '/api/private/chart':
+                        name=query.get('symbol',[''])[0]
+                        step=float(query['step'][0]) if 'step' in query else None
+                        margin=float(query['range'][0]) if 'range' in query else None
+                        since=query.get('since',[None])[0]
+                        if since is not None and (len(since)!=24 or any(c not in '0123456789abcdef' for c in since)):
+                            raise ValueError('Некорректная ревизия.')
+                        return self.reply(200,service.private.chart(name,step,margin,since))
+                except ValueError as error:
+                    return self.reply(400,{'error':'Увеличьте ценовой шаг: слишком много уровней для одной карты.' if str(error)=='Chart matrix too large' else str(error)})
+                except ServiceBusy:
+                    return self.reply(429,{'error':'Расчёт занят. Повторите через несколько секунд.'})
+                except Exception:
+                    LOG.warning('Private snapshot unavailable')
+                    return self.reply(503,{'error':'Не удалось получить данные. Повторите запрос.'})
+                return self.reply(404,{'error':'Not found'})
             if parsed.path == '/enter':
                 return self.reply(302, b'', extra={'Location': '/'})
+            if parsed.path == '/api/spread':
+                return self.reply(200,service.spread.get('BTCUSDT') if service.spread else {'available':False})
             if parsed.path == '/healthz':
                 return self.reply(200, {'ok': True})
             if parsed.path == '/readyz':
@@ -250,6 +289,8 @@ def handler_for(service):
                     LOG.warning('Chart snapshot unavailable')
                     return self.reply(503, {'error': 'Архив временно недоступен. Повторим запрос.'})
             files = {'/': ('index.html', 'text/html; charset=utf-8'),
+                     '/private': ('index.html', 'text/html; charset=utf-8'),
+                     '/private.js': ('private.js', 'text/javascript; charset=utf-8'),
                      '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
                      '/lightweight-charts.js': ('lightweight-charts.js', 'text/javascript; charset=utf-8'),
                      '/updates.js': ('updates.js', 'text/javascript; charset=utf-8'),
@@ -261,6 +302,8 @@ def handler_for(service):
                 return self.reply(404, {'error': 'Not found'})
             filename, content_type = files[parsed.path]
             body = (STATIC/filename).read_bytes()
+            if parsed.path == '/private':
+                body=body.replace(b'<html lang="ru">',b'<html lang="ru" data-private="true">')
             self.reply(200, body, content_type)
 
         def do_HEAD(self):
@@ -268,7 +311,35 @@ def handler_for(service):
 
         def do_POST(self):
             self.close_connection = True
-            return self.reply(404, {'error': 'Not found'})
+            path=urlsplit(self.path).path
+            routes={'/api/private/session','/api/private/start','/api/private/delete','/api/private/settings'}
+            if path not in routes:return self.reply(404,{'error':'Not found'})
+            if path!='/api/private/session' and not authorized(service.config,self.headers.get('Cookie')):
+                return self.reply(403,{'error':'Доступно только владельцу.'})
+            origin=urlsplit(self.headers.get('Origin',''))
+            if origin.scheme not in ('https','http') or origin.netloc!=self.headers.get('Host') or origin.path or origin.query or origin.fragment:
+                return self.reply(403,{'error':'Недопустимый источник запроса.'})
+            try:
+                length=int(self.headers.get('Content-Length','0'))
+                if not 0<length<=8192 or self.headers.get('Content-Type','').split(';')[0]!='application/json':
+                    raise ValueError('Некорректный запрос.')
+                value=json.loads(self.rfile.read(length))
+                if not isinstance(value,dict):raise ValueError('Некорректный запрос.')
+                if path=='/api/private/session':
+                    token=value.get('token')
+                    if not valid_token(service.config,token):return self.reply(403,{'error':'Личная ссылка недействительна.'})
+                    return self.reply(200,{'owner':True},extra={'Set-Cookie':f'{PRIVATE_COOKIE}={token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=2592000'})
+                if service.private is None:return self.reply(503,{'error':'Личная панель временно недоступна.'})
+                name=value.get('symbol')
+                if path=='/api/private/start':return self.reply(202,service.private.add(name))
+                if path=='/api/private/delete':return self.reply(202,service.private.delete(name))
+                service.private.save_settings(name,value.get('settings'))
+                return self.reply(200,{'saved':True})
+            except (ValueError,TypeError) as error:
+                return self.reply(400,{'error':str(error)})
+            except Exception:
+                LOG.warning('Private operation unavailable')
+                return self.reply(503,{'error':'Не удалось выполнить действие. Повторите запрос.'})
     return Handler
 
 
@@ -280,6 +351,14 @@ def run(config):
     lock = (root/'web.lock').open('w')
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     service = ChartService(config)
+    service.spread = SpreadCache()
+    from .private_pairs import PairManager
+    try:
+        service.private = PairManager(config)
+        service.private.start()
+    except Exception:
+        LOG.exception('Private manager unavailable; public BTC remains online')
+        service.private = None
     server = BoundedHTTPServer(('127.0.0.1', config.get('web_port', 8790)), handler_for(service))
     server.daemon_threads = True
     server.timeout = 1
@@ -295,7 +374,9 @@ def run(config):
             server.handle_request()
     finally:
         server.server_close()
+        service.spread.close()
         stopping.set()
         market_thread.join(timeout=12)
+        if service.private is not None:service.private.close()
         pid_file.unlink(missing_ok=True)
         lock.close()

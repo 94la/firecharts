@@ -69,6 +69,26 @@ class CollectorTests(unittest.IsolatedAsyncioTestCase):
             result=verify(config)
             self.assertTrue(result['book_matches_checkpoint']);self.assertTrue(result['known_band_matches_checkpoint']);self.assertTrue(result['cvd_matches_sqlite'])
 
+    async def test_private_map_does_not_wait_for_first_execution(self):
+        with tempfile.TemporaryDirectory() as root:
+            config=dict(data_dir=root,base_price_step=.000001,price_scale=1_000_000,
+                        private_pair=True,symbol='ETHBTC',checkpoint_seconds=60,
+                        retention_days=.25,min_free_gib=0)
+            stamp=int(time.time()*1000)
+            async def feed(config,queue,stop):
+                queue.put_nowait((stamp,dict(e='depthUpdate',U=101,u=101,b=[],a=[])))
+                await asyncio.sleep(.02)
+                queue.put_nowait((stamp+20,dict(e='depthUpdate',U=102,u=102,b=[],a=[])))
+                await stop.wait()
+            def rest(*args,**kwargs):return dict(lastUpdateId=100,bids=[['0.030001','1']],asks=[['0.030003','1']])
+            with patch('mtanalog.collector.receive',feed),patch('mtanalog.collector.rest',rest):
+                await collect(config,duration=.08)
+            store=Store(root,read_only=True)
+            self.assertEqual(store.db.execute('SELECT count(*) FROM cvd').fetchone()[0],0)
+            self.assertGreater(store.db.execute('SELECT count(*) FROM liquidity').fetchone()[0],0)
+            self.assertAlmostEqual(store.db.execute('SELECT price FROM prices').fetchone()[0],.030002)
+            store.close()
+
     async def test_transient_backfill_error_does_not_leave_false_cvd_gap(self):
         with tempfile.TemporaryDirectory() as root:
             config = {'data_dir': root, 'base_price_step': 25, 'symbol': 'BTCUSDT',

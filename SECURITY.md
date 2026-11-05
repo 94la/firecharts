@@ -1,11 +1,22 @@
-# Security
+# Безопасность
 
-Only public Binance Spot market data is used; no exchange keys, accounts or trading.
-Bind the backend to loopback and expose it through an HTTPS reverse proxy.
-FireCharts is public, without invitation links or owner accounts.
+FireCharts использует публичные Binance/Bybit Spot market data. Торговые ключи,
+доступ к счетам и исполнение сделок не требуются.
 
-Never commit production data/, backups, raw feeds, logs, cookies, private deployment
-configuration or environment files. Keep LICENSE/NOTICE files for dependencies.
-Review HTTP route/static allowlists and run the tests before deploying.
+- Backend оставляйте на127.0.0.1; публикуйте через HTTPS reverse proxy.
+- Основной BTC открыт гостям. Личные пары и операции доступны только владельцу
+  после серверной проверки capability; POST дополнительно проверяет Origin.
+- Личная ссылка — bearer-секрет. Не передавайте её гостям и не записывайте
+  в issue, скриншоты, публичные логи или репозиторий. Ротация private-link
+  отзывает прежнюю ссылку и cookie. Сама ссылка не имеет автоматического срока;
+  30 дней Max-Age cookie не равны сроку действия capability.
+- Не включайте data/, backups, raw, output/, cookie, environment-файлы,
+  сертификаты и конфигурацию реального сервера в Git.
+- Запускайте сервисы под непривилегированным пользователем, следите за обновлениями,
+  диском и нагрузкой. Встроенные ограничения расчётов не заменяют защиту от
+  массового трафика на reverse proxy.
+- Перед изменениями проверяйте маршрутные/static allowlists и тесты доступа.
 
-When reporting vulnerabilities, omit secrets and private server data from public issues.
+Сообщение об уязвимости не должно содержать рабочий токен или реальные данные
+сервера. Для воспроизведения используйте временную копию и тестовые записи.
+Не запускайте активное сканирование или нагрузочные проверки на рабочей установке.

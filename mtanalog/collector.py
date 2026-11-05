@@ -32,7 +32,7 @@ class RestError(Exception):
 def rest(config, path, **params):
     url = config['rest_url'] + path + '?' + urllib.parse.urlencode(params)
     try:
-        with urllib.request.urlopen(url, timeout=20) as response:
+        with urllib.request.urlopen(url, timeout=config.get("rest_timeout", 20)) as response:
             return json.load(response)
     except urllib.error.HTTPError as error:
         # Respect rate limits; never log credential-bearing headers or bodies.
@@ -88,18 +88,28 @@ async def receive(config, queue, stop):
 
 
 async def collect(config, duration=None):
-    store = Store(config['data_dir'])
+    store = Store(config['data_dir'], auto_vacuum=config.get('private_pair', False))
+    store.bin_epsilon = 1e-14 if config.get('private_pair') else 1e-6
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
     deadline = time.monotonic() + duration if duration else float('inf')
-    book = Book(config['base_price_step'])
+    book = Book(config['base_price_step'], config.get('price_scale', 100))
     base_step = store.get_meta('base_price_step')
     if base_step is not None and base_step != config['base_price_step']:
         store.close()
         raise ValueError('base_price_step differs from the existing archive')
     store.meta('base_price_step', config['base_price_step'])
+    if config.get('private_pair'):
+        saved_scale=store.get_meta('price_scale')
+        if saved_scale is not None and saved_scale != config['price_scale']:
+            store.close();raise ValueError('price_scale differs from the existing private archive')
+        store.meta('price_scale',config['price_scale'])
+        saved_trade_scale=store.get_meta('trade_scale')
+        if saved_trade_scale is not None and saved_trade_scale != config.get('trade_scale',1_000_000):
+            store.close();raise ValueError('trade_scale differs from the existing private archive')
+        store.meta('trade_scale',config.get('trade_scale',1_000_000))
     chart = MinuteMap(store)
     last_depth = None
     depth_gap = None
@@ -114,7 +124,7 @@ async def collect(config, duration=None):
             last_depth = checkpoint['received_ms']
         except (OSError, ValueError, KeyError):
             LOG.exception('Checkpoint unavailable; will initialize from REST')
-            book = Book(config['base_price_step'])
+            book = Book(config['base_price_step'], config.get('price_scale', 100))
     latest_state = store.get_meta('collector', {})
     start_gap = latest_state.get('last_depth_ms') or last_depth
     if start_gap:
@@ -125,7 +135,7 @@ async def collect(config, duration=None):
 
     async def process_trade(event, received, recovered=False):
         nonlocal trades
-        cohort, delta = trade_values(event)
+        cohort, delta = trade_values(event,config.get('trade_scale',1_000_000))
         if store.trade(event, cohort, delta):
             store.raw('aggTrade_recovered' if recovered else 'aggTrade', event, received)
             trades += 1
@@ -246,6 +256,11 @@ async def collect(config, duration=None):
                             # No wall-clock advancement across buffered depth events.
                             horizon = received if not queue.empty() else current
                             chart.persist(max(chart.last_ms or horizon, horizon))
+                            if config.get('private_pair') and book.bids and book.asks:
+                                midpoint=(max(book.bids)+min(book.asks))/(2*book.scale)
+                                sample=chart.last_ms
+                                store.db.execute('INSERT INTO prices VALUES(?,?,?) ON CONFLICT(minute) DO UPDATE SET time=excluded.time,price=excluded.price WHERE excluded.time>=prices.time',
+                                                 (sample//60000*60000,sample,midpoint))
                         store.meta('collector', {'state': 'collecting' if ready else 'synchronizing',
                             'heartbeat_ms': current, 'last_depth_ms': last_depth,
                             'depth_events_this_run': events, 'trades_this_run': trades,
@@ -260,8 +275,10 @@ async def collect(config, duration=None):
                     if ready and current - last_checkpoint >= config['checkpoint_seconds'] * 1000:
                         store.checkpoint(book.export(), current, book.low, book.high)
                         last_checkpoint = current
-                    if current - last_prune >= 3600000:
+                    if current - last_prune >= config.get('prune_interval_seconds', 3600)*1000:
                         store.prune(config['retention_days'], current)
+                        if config.get('private_pair'):
+                            store.db.execute('PRAGMA incremental_vacuum(256)')
                         last_prune = current
                         if shutil.disk_usage(store.root).free < config['min_free_gib'] * 2**30:
                             raise OSError('Free disk below configured safety floor')

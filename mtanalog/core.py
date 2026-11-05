@@ -12,8 +12,12 @@ def cents(price):
 
 
 class Book:
-    def __init__(self, step=25):
-        self.step = step * 100
+    def __init__(self, step=25, price_scale=100):
+        self.scale = price_scale
+        self.step = int(Decimal(str(step)) * price_scale)
+        if self.step < 1:
+            raise ValueError("Price step is below archive precision")
+        self.epsilon = 1e-6 if price_scale == 100 else 1e-14
         self.bids = {}
         self.asks = {}
         self.bins = defaultdict(float)
@@ -22,11 +26,11 @@ class Book:
 
     def _set(self, side, price, quantity):
         levels = self.bids if side == 'b' else self.asks
-        p, q = cents(price), float(quantity)
+        p, q = int(Decimal(str(price)) * self.scale), float(quantity)
         bucket = p // self.step * self.step
         key = (side, bucket)
-        self.bins[key] += p / 100 * (q - levels.get(p, 0))
-        if abs(self.bins[key]) < 1e-6:
+        self.bins[key] += p / self.scale * (q - levels.get(p, 0))
+        if abs(self.bins[key]) < self.epsilon:
             self.bins.pop(key, None)
         if q:
             levels[p] = q
@@ -41,8 +45,8 @@ class Book:
             for p, q in payload[name]:
                 self._set(side, p, q)
         self.update_id = payload['lastUpdateId']
-        self.low = min(self.bids) / 100 if self.bids else None
-        self.high = max(self.asks) / 100 if self.asks else None
+        self.low = min(self.bids) / self.scale if self.bids else None
+        self.high = max(self.asks) / self.scale if self.asks else None
         if 'known_low' in payload and 'known_high' in payload:
             self.low,self.high=payload['known_low'],payload['known_high']
 
@@ -59,14 +63,14 @@ class Book:
 
     def refreshed(self,payload,events):
         """Rebase at the same sequence frontier; preserve continuously observed far levels."""
-        candidate=Book(self.step//100);candidate.snapshot(payload)
+        candidate=Book(Decimal(self.step)/self.scale,self.scale);candidate.snapshot(payload)
         if candidate.low is None or candidate.high is None:
             raise ValueError('Empty REST book')
-        lower,upper=cents(candidate.low),cents(candidate.high)
+        lower,upper=int(Decimal(str(candidate.low))*self.scale),int(Decimal(str(candidate.high))*self.scale)
         for side,levels in [('b',self.bids),('a',self.asks)]:
             for price,quantity in levels.items():
                 if price<lower or price>upper:
-                    candidate._set(side,str(price/100),str(quantity))
+                    candidate._set(side,str(Decimal(price)/self.scale),str(quantity))
         for event in events:candidate.apply(event)
         if candidate.update_id!=self.update_id:
             raise SequenceGap('Refreshed snapshot does not match live sequence frontier')
@@ -77,7 +81,7 @@ class Book:
             raise SequenceGap('Coverage rebase must keep the live frontier')
         record=dict(lastUpdateId=self.update_id,known_low=candidate.low,known_high=candidate.high)
         for side,old,new in [('b',self.bids,candidate.bids),('a',self.asks,candidate.asks)]:
-            record[side]=[[str(p/100),str(new.get(p,0))] for p in sorted(old.keys()|new.keys()) if old.get(p,0)!=new.get(p,0)]
+            record[side]=[[str(Decimal(p)/self.scale),str(new.get(p,0))] for p in sorted(old.keys()|new.keys()) if old.get(p,0)!=new.get(p,0)]
         return record
 
     def apply_refresh(self,record):
@@ -89,8 +93,8 @@ class Book:
 
     def export(self):
         return {'lastUpdateId': self.update_id,
-                'bids': [[str(p / 100), str(q)] for p, q in self.bids.items()],
-                'asks': [[str(p / 100), str(q)] for p, q in self.asks.items()]}
+                'bids': [[str(p/100) if self.scale==100 else str(Decimal(p)/self.scale), str(q)] for p, q in self.bids.items()],
+                'asks': [[str(p/100) if self.scale==100 else str(Decimal(p)/self.scale), str(q)] for p, q in self.asks.items()]}
 
 
 # All trades are covered; displayed groups have explicit half-open intervals.
@@ -99,11 +103,11 @@ LABELS = ('< $100', '$100–$1k', '$1k–$10k', '$10k–$100k',
           '$100k–$1M', '$1M–$10M', '≥ $10M')
 
 
-def trade_values(trade):
+def trade_values(trade, unit_scale=1_000_000):
     amount = Decimal(trade['p']) * Decimal(trade['q'])
     group = sum(amount >= edge for edge in EDGES)
-    # Store signed millionths of a USDT; avoid accumulated binary float error.
-    units = int((amount * 1_000_000).to_integral_value())
+    # Signed integer quote units; public BTC keeps its original millionths of USDT.
+    units = int((amount * unit_scale).to_integral_value())
     return group, -units if trade['m'] else units
 
 
@@ -138,7 +142,7 @@ class MinuteMap:
                 first = min(first, base_first)
                 last = max(last, base_last)
             rows = [[side, p, value / duration]
-                    for (side, p), value in sums.items() if value > 1e-6]
+                    for (side, p), value in sums.items() if value > getattr(self.store, "bin_epsilon", 1e-6)]
             self.store.save_minute(self.minute, rows, duration,
                                    low_sum / duration, high_sum / duration, first, last)
 

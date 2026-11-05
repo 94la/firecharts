@@ -22,17 +22,17 @@ _BIN_LOCK = threading.Lock()
 _BIN_LIMIT = 32*1024*1024
 
 
-def grouped_bins(packed, low, rows, step):
+def grouped_bins(packed, low, rows, step, price_scale=100):
     """Cache compact chart aggregates, not much larger decoded order levels."""
     global _BIN_BYTES
-    key = (hashlib.sha256(packed).digest(),low,rows,step)
+    key = (hashlib.sha256(packed).digest(),low,rows,step,price_scale)
     with _BIN_LOCK:
         cached = _BIN_CACHE.get(key)
         if cached is not None:
             _BIN_CACHE.move_to_end(key)
             return cached
     bins = np.asarray([[price,value] for _,price,value in unpack(packed)],dtype=np.float64).reshape(-1,2)
-    indices = (bins[:,0]//(step*100)-low//step).astype(np.int64)
+    indices = np.floor((bins[:,0]/price_scale-low)/step+1e-8).astype(np.int64)
     inside = (indices>=0)&(indices<rows)
     values = np.bincount(indices[inside],weights=bins[inside,1],minlength=rows)
     values.flags.writeable = False
@@ -53,6 +53,18 @@ def price_settings(config, mode, step=None, margin=None):
     step = config['price_step'] if step is None else step
     margin = PRESETS[mode][1] if margin is None else margin
     base = config.get('base_price_step', 25)
+    if config.get('private_pair'):
+        from decimal import Decimal, InvalidOperation
+        try:
+            units=Decimal(str(step))*config['price_scale']
+            if (isinstance(step, bool) or not math.isfinite(float(step)) or not 0 < float(step) <= 1e12
+                    or units != units.to_integral_value() or int(units) % int(Decimal(str(base))*config['price_scale'])):
+                raise ValueError('Шаг должен быть положительным и кратным минимальному шагу пары.')
+            if isinstance(margin,bool) or not math.isfinite(margin) or not .5 <= margin <= 20 or not math.isclose(margin*2,round(margin*2),abs_tol=1e-9):
+                raise ValueError('Invalid price margin')
+            return float(step), round(margin*2)/2
+        except (InvalidOperation, TypeError, OverflowError) as error:
+            raise ValueError('Invalid price settings') from error
     if (not isinstance(step, int) or not base <= step <= 2000 or step % base
             or not math.isfinite(margin) or not .5 <= margin <= 20
             or not math.isclose(margin*2, round(margin*2), abs_tol=1e-9)):
@@ -66,8 +78,10 @@ def chart_data(config, mode='1d', end_ms=None, price_step=None, margin_pct=None,
     days, _ = PRESETS[mode]
     step, margin = price_settings(config, mode, price_step, margin_pct)
     end = end_ms or int(time.time() * 1000)
-    requested_start = end - days * 86400000
+    requested_start = end - (config.get('window_hours', days*24))*3600000
     path = Path(config['data_dir']) / 'archive.sqlite'
+    if config.get('private_pair') and not path.exists():
+        return {'empty': True, 'mode': mode, 'generated_ms': end}
     db = sqlite3.connect(f'file:{path.resolve()}?mode=ro', uri=True, timeout=10)
     try:
         db.execute('BEGIN')
@@ -77,7 +91,7 @@ def chart_data(config, mode='1d', end_ms=None, price_step=None, margin_pct=None,
             return {'empty': True, 'mode': mode, 'generated_ms': end}
         start = max(requested_start, first)
         actual_end = end
-        column_ms = (120000 if mode=='1d' else 900000) if aligned else None
+        column_ms = (60000 if config.get('private_pair') else 120000 if mode=='1d' else 900000) if aligned else None
         if aligned:
             start = start//column_ms*column_ms
         prices = db.execute('SELECT minute,time,price FROM prices WHERE minute>=? AND minute<? ORDER BY minute',
@@ -108,7 +122,7 @@ def chart_data(config, mode='1d', end_ms=None, price_step=None, margin_pct=None,
             a, b = max(start, begin), min(actual_end, finish)
             if b <= a:
                 continue
-            grouped = grouped_bins(packed,low,rows,step)
+            grouped = grouped_bins(packed,low,rows,step,config.get('price_scale',100))
             left = max(0, int(np.searchsorted(edges, a, side='right'))-1)
             right = min(columns-1, int(np.searchsorted(edges, b, side='left'))-1)
             for column in range(left, right+1):
@@ -122,13 +136,13 @@ def chart_data(config, mode='1d', end_ms=None, price_step=None, margin_pct=None,
         amounts[populated] /= durations[populated, None]
         # Sparse arrays retain ALL volumes; browser applies the requested filter.
         liquidity = [None if not populated[c] else
-                     [[r, round(float(v), 2)] for r, v in enumerate(amounts[c]) if v > .01]
+                     [[r, round(float(v), 12 if config.get('private_pair') else 2)] for r, v in enumerate(amounts[c]) if v > (1e-14 if config.get('private_pair') else .01)]
                      for c in range(columns)]
         deltas = np.zeros((columns, 7))
         for minute, cohort, delta in db.execute('SELECT minute,cohort,delta FROM cvd WHERE minute>=? '
                                               'AND minute<?', (start//60000*60000, end)):
             col = min(columns-1, max(0, int(np.searchsorted(edges, minute, side='right'))-1))
-            deltas[col, cohort] += delta/1e6
+            deltas[col, cohort] += delta/config.get('trade_scale',1_000_000)
         cvd = np.cumsum(np.column_stack([deltas.sum(axis=1), deltas]), axis=0)
         gaps = db.execute('SELECT kind,start,end FROM gaps WHERE start<? AND '
                           '(end IS NULL OR end>?)', (end, start)).fetchall()
@@ -137,7 +151,7 @@ def chart_data(config, mode='1d', end_ms=None, price_step=None, margin_pct=None,
         last_trade = json.loads(meta.get('last_trade_ms', '0'))
         cvd_rows = [None if (edges[c+1] <= prices[0][0] or edges[c] > last_trade
                             or invalid is not None and edges[c+1] > invalid)
-                    else [round(float(v), 2) for v in cvd[c]] for c in range(columns)]
+                    else [round(float(v), 12 if config.get('private_pair') else 2) for v in cvd[c]] for c in range(columns)]
         collector = json.loads(meta.get('collector', '{}'))
         book_band=[]
         if db.execute("SELECT 1 FROM sqlite_master WHERE name='book_coverage'").fetchone():
@@ -150,7 +164,9 @@ def chart_data(config, mode='1d', end_ms=None, price_step=None, margin_pct=None,
             book_band=([anchor] if anchor else [])+([samples[0]] if samples and samples[0] not in selected.values() else [])+list(selected.values())
         last_price = prices[-1][2]
         return {**market, 'empty': False, 'mode': mode, 'generated_ms': actual_end,
-                'column_ms': column_ms, 'observed_ms': actual_end,
+                'quote_asset':config.get('quote_asset','USDT'), 'symbol':config.get('symbol','BTCUSDT'),
+                'price_precision':config.get('price_precision',2), 'private_pair':bool(config.get('private_pair')),
+                'window_hours':config.get('window_hours',days*24), 'column_ms': column_ms, 'observed_ms': actual_end,
                 'requested_start_ms': requested_start, 'start_ms': start, 'end_ms': end,
                 'price_margin_pct': margin, 'low': low, 'high': high, 'price_step': step,
                 'rows': rows, 'columns': columns, 'liquidity': liquidity,

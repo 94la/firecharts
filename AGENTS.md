@@ -1,8 +1,22 @@
-# MIanalOG
+# FireCharts — инструкции агентам
 
-BTCUSDT Spot, public market data only; no API keys or trading.
-Read README.md before changes. Do not run a second archive writer.
-Run `.venv/bin/python -m unittest discover -s tests -v`, compileall and `node tests/chart.mjs`.
-Use TemporaryDirectory in tests; never delete production data/.
-Web only reads archive.sqlite and listens on loopback. Preserve existing reverse proxy routes.
-Unknown depth after gaps must remain unknown; filter after price aggregation.
+Перед изменениями прочитайте README.md, spec.md, tasks.md и docs/wiki/index.md.
+Сначала проверьте Git status и сохраните чужие незавершённые изменения.
+
+- Только публичные Spot market data Binance/Bybit, без торговых ключей и сделок.
+- Публичный BTCUSDT и отдельные личные пары владельца: один writer на архив.
+- Не запускайте collect/live-smoke параллельно постоянному collector.
+- Web читает основной archive.sqlite, слушает loopback; сохраняйте другие proxy routes.
+- Личные API проверяют роль на сервере, POST — Origin и JSON. Защищайте публичный
+  BTC от личных start/delete/settings, не ослабляйте ограничения расчётов.
+- Не считайте неизвестные дальние уровни после gap актуальными. Объём усредняется
+  по времени; фильтр применяется после ценовой агрегации.
+- Используйте TemporaryDirectory в тестах. Не удаляйте рабочие data/ и не
+  публикуйте адреса реальной установки, private-link, cookies, данные или логи.
+- Не меняйте systemd/Caddy и не выполняйте публикацию без разрешения владельца.
+- После содержательного изменения обновите затронутую документацию и выполните
+  `.venv/bin/python -m unittest discover -s tests -v`, compileall и подходящие JS-тесты.
+- Браузерные/private live-тесты могут создавать или удалять свои данные: сначала
+  прочитайте сценарий, используйте изолированную среду. Не трогайте пары владельца.
+- Указывайте реально пройденные проверки и ограничения, не обещайте проверенный
+  reboot/чистую установку/предельную нагрузку без фактической проверки.

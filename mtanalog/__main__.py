@@ -23,6 +23,9 @@ def main():
     sub.add_parser('web')
     sub.add_parser('web-start')
     sub.add_parser('web-stop')
+    owner=sub.add_parser('private-link',help='Create or rotate the private pair owner link')
+    owner.add_argument('--origin',required=True)
+    owner.add_argument('--output',default='output/private-owner-link.txt')
     for command in ('start', 'stop', 'serve'):
         sub.add_parser(command)
     args = parser.parse_args()
@@ -35,7 +38,11 @@ def main():
         parser.error('Price steps and minimum liquidity must be positive.')
     Path(config['data_dir']).mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
-    if args.command == 'collect':
+    if args.command == 'private-link':
+        from .private_access import create_link
+        create_link(config,args.origin,args.output)
+        print('Private link saved to:',args.output)
+    elif args.command == 'collect':
         if args.seconds is None:
             handler = RotatingFileHandler(Path(config['data_dir'])/'collector.log', maxBytes=5_000_000, backupCount=2)
             handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))

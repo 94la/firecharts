@@ -51,7 +51,7 @@ def sync_directory(path):
 
 
 class Store:
-    def __init__(self, root, read_only=False):
+    def __init__(self, root, read_only=False, auto_vacuum=False):
         self.root = Path(root)
         self.read_only = read_only
         self.lock = None
@@ -73,6 +73,8 @@ class Store:
         for directory in ('raw', 'checkpoints'):
             (self.root / directory).mkdir(exist_ok=True)
         self.db = sqlite3.connect(self.root / 'archive.sqlite', timeout=30)
+        if auto_vacuum:
+            self.db.execute('PRAGMA auto_vacuum=INCREMENTAL')
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.execute('PRAGMA busy_timeout=30000')
         self.db.executescript('''
